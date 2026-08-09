@@ -393,7 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--port", help="Serial port, e.g. /dev/ttyUSB0 or COM3 (serial transport only)")
     p.add_argument("--host", help="Gateway/controller hostname or IP (TCP transport only)")
-    p.add_argument("--tcp-port", type=int, default=502, help="TCP port for Modbus gateway/controller")
+    p.add_argument("--tcp-port", type=int, default=1963, help="TCP port for Modbus gateway/controller")
     p.add_argument("--mode",    default="rtu", choices=["rtu", "ascii"], help="Modbus framing mode")
     p.add_argument("--slave",   type=int, default=1, help="Modbus slave address")
     p.add_argument("--baud",    type=int, default=9600, help="Baud rate")

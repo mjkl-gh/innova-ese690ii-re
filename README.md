@@ -85,7 +85,7 @@ python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu
 
 Output is written to `scan_<timestamp>.csv` and `scan_<timestamp>.log`.
 
-Use `--host` and optional `--tcp-port` for Ethernet/RS-485 gateways. `--mode rtu` with
+Use `--host` and optional `--tcp-port` for Ethernet/RS-485 gateways (default `1963`). `--mode rtu` with
 `--transport tcp` gives RTU-over-TCP, while `--mode ascii` with `--transport tcp` gives
 ASCII-over-TCP.
 
