@@ -409,12 +409,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--write", action="store_true",
                    help="Enable write probing (bit-by-bit, restores original value)")
     p.add_argument("--output-dir", default=".", help="Directory for output files")
-    p.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging")
+    p.add_argument("-v", "--verbose", action="store_true", help="Reduce logging to INFO level (quiet mode)")
     return p
 
 
 def setup_logging(verbose: bool, log_path: Path) -> None:
-    level = logging.DEBUG if verbose else logging.INFO
+    level = logging.INFO if verbose else logging.DEBUG
     fmt   = "%(asctime)s %(levelname)-7s %(message)s"
 
     logging.basicConfig(level=level, format=fmt, handlers=[
