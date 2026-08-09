@@ -38,7 +38,7 @@ Use a USB–RS-485 adapter (e.g. CH340/FTDI based) or an ESP32/ESP8266 with a MA
 ├── esphome/
 │   └── innova_ese690ii.yaml     # ESPHome Modbus integration
 ├── tools/
-│   └── scan_registers.py        # Register scanner (RTU + ASCII)
+│   └── scan_registers.py        # Register scanner (serial/TCP, RTU + ASCII)
 ├── docs/
 │   └── register_map.md          # Known register map (community maintained)
 └── requirements.txt
@@ -63,21 +63,31 @@ to determine writability and bit width.
 ```bash
 pip install -r requirements.txt
 
-# RTU mode
-python tools/scan_registers.py --port /dev/ttyUSB0 --mode rtu --slave 1
+# RTU over serial
+python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu --slave 1
 
-# ASCII mode
-python tools/scan_registers.py --port /dev/ttyUSB0 --mode ascii --slave 1
+# ASCII over serial
+python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode ascii --slave 1
+
+# RTU over TCP
+python tools/scan_registers.py --transport tcp --host 192.168.1.50 --mode rtu --slave 1
+
+# ASCII over TCP
+python tools/scan_registers.py --transport tcp --host 192.168.1.50 --mode ascii --slave 1
 
 # Limit to holding registers, addresses 0–99
-python tools/scan_registers.py --port /dev/ttyUSB0 --mode rtu \
+python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu \
     --reg-types holding --start 0 --end 99
 
 # Skip write probing (read-only scan)
-python tools/scan_registers.py --port /dev/ttyUSB0 --mode rtu --no-write
+python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu --no-write
 ```
 
 Output is written to `scan_<timestamp>.csv` and `scan_<timestamp>.log`.
+
+Use `--host` and optional `--tcp-port` for Ethernet/RS-485 gateways. `--mode rtu` with
+`--transport tcp` gives RTU-over-TCP, while `--mode ascii` with `--transport tcp` gives
+ASCII-over-TCP.
 
 ---
 

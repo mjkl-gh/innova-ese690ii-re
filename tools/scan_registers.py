@@ -9,16 +9,24 @@ bit-by-bit write probe to characterise the register width and writability.
 
 Modes
 -----
-  RTU   : standard binary Modbus over RS-485
-  ASCII : Modbus ASCII framing over RS-485 (some Innova firmware variants)
+  Serial + RTU   : standard binary Modbus over RS-485
+  Serial + ASCII : Modbus ASCII framing over RS-485 (some Innova firmware variants)
+  TCP + RTU      : RTU-over-TCP via an Ethernet/serial gateway
+  TCP + ASCII    : ASCII-over-TCP via an Ethernet/serial gateway
 
 Usage
 -----
-  python scan_registers.py --port /dev/ttyUSB0 --mode rtu  --slave 1
-  python scan_registers.py --port /dev/ttyUSB0 --mode ascii --slave 1
+  python scan_registers.py --port /dev/ttyUSB0 --transport serial --mode rtu   --slave 1
+  python scan_registers.py --port /dev/ttyUSB0 --transport serial --mode ascii --slave 1
+
+  # RTU-over-TCP
+  python scan_registers.py --transport tcp --host 192.168.1.50 --mode rtu --slave 1
+
+  # ASCII-over-TCP
+  python scan_registers.py --transport tcp --host 192.168.1.50 --mode ascii --slave 1
 
   # Restrict to holding registers, addresses 0-49, skip write probing
-  python scan_registers.py --port /dev/ttyUSB0 --mode rtu \\
+  python scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu \\
       --reg-types holding --start 0 --end 49 --no-write
 
 Output
@@ -31,15 +39,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import inspect
 import logging
 import sys
 import time
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
-from pymodbus.client import ModbusSerialClient
+from pymodbus.client import ModbusSerialClient, ModbusTcpClient
 from pymodbus.exceptions import ModbusException
 from pymodbus.pdu import ExceptionResponse
 
@@ -103,30 +112,76 @@ class RegisterResult:
 class InnovaScanner:
     def __init__(
         self,
-        port: str,
+        transport: str,
         mode: str,
         slave: int,
+        port: Optional[str],
+        host: Optional[str],
+        tcp_port: int,
         baud: int,
         parity: str,
         timeout: float,
         inter_request_delay: float,
         probe_write: bool,
     ) -> None:
-        self.slave  = slave
+        self.slave = slave
         self.probe_write = probe_write
         self.inter_request_delay = inter_request_delay
+        self.transport = transport
+        self.mode = mode
 
-        self.client = ModbusSerialClient(
-            port=port,
-            framer=mode,          # "rtu" or "ascii"
-            baudrate=baud,
-            parity=parity,
-            bytesize=8,
-            stopbits=1,
-            timeout=timeout,
-        )
+        if transport == "serial":
+            if not port:
+                raise ValueError("Serial transport requires --port")
+            self.endpoint = port
+            self.client = ModbusSerialClient(
+                port=port,
+                framer=mode,
+                baudrate=baud,
+                parity=parity,
+                bytesize=8,
+                stopbits=1,
+                timeout=timeout,
+            )
+        elif transport == "tcp":
+            if not host:
+                raise ValueError("TCP transport requires --host")
+            self.endpoint = f"{host}:{tcp_port}"
+            self.client = ModbusTcpClient(
+                host=host,
+                port=tcp_port,
+                framer=mode,
+                timeout=timeout,
+            )
+        else:
+            raise ValueError(f"Unsupported transport: {transport}")
+
+        self.request_unit_kwarg = self._detect_unit_kwarg()
 
         self.log = logging.getLogger("scanner")
+
+    def _detect_unit_kwarg(self) -> str:
+        methods = [
+            self.client.read_coils,
+            self.client.read_discrete_inputs,
+            self.client.read_input_registers,
+            self.client.read_holding_registers,
+            self.client.write_coil,
+            self.client.write_register,
+        ]
+        for method in methods:
+            try:
+                params = inspect.signature(method).parameters
+            except (TypeError, ValueError):
+                continue
+            if "device_id" in params:
+                return "device_id"
+            if "slave" in params:
+                return "slave"
+        return "slave"
+
+    def _unit_kwargs(self) -> dict[str, int]:
+        return {self.request_unit_kwarg: self.slave}
 
     # ------------------------------------------------------------------ #
     # Connection
@@ -134,8 +189,13 @@ class InnovaScanner:
 
     def connect(self) -> None:
         if not self.client.connect():
-            raise ConnectionError(f"Could not open serial port {self.client.port}")
-        self.log.info("Connected to %s", self.client.port)
+            raise ConnectionError(f"Could not connect to {self.transport} endpoint {self.endpoint}")
+        self.log.info(
+            "Connected to %s endpoint %s using %s framing",
+            self.transport,
+            self.endpoint,
+            self.mode,
+        )
 
     def disconnect(self) -> None:
         self.client.close()
@@ -151,28 +211,28 @@ class InnovaScanner:
 
     def _read_coils(self, address: int) -> RegisterResult:
         self._sleep()
-        rr = self.client.read_coils(address, count=1, slave=self.slave)
+        rr = self.client.read_coils(address, count=1, **self._unit_kwargs())
         if rr.isError() or isinstance(rr, ExceptionResponse):
             return RegisterResult("coil", address, None, False, str(rr))
         return RegisterResult("coil", address, int(rr.bits[0]), True)
 
     def _read_discrete(self, address: int) -> RegisterResult:
         self._sleep()
-        rr = self.client.read_discrete_inputs(address, count=1, slave=self.slave)
+        rr = self.client.read_discrete_inputs(address, count=1, **self._unit_kwargs())
         if rr.isError() or isinstance(rr, ExceptionResponse):
             return RegisterResult("discrete", address, None, False, str(rr))
         return RegisterResult("discrete", address, int(rr.bits[0]), True)
 
     def _read_input(self, address: int) -> RegisterResult:
         self._sleep()
-        rr = self.client.read_input_registers(address, count=1, slave=self.slave)
+        rr = self.client.read_input_registers(address, count=1, **self._unit_kwargs())
         if rr.isError() or isinstance(rr, ExceptionResponse):
             return RegisterResult("input", address, None, False, str(rr))
         return RegisterResult("input", address, rr.registers[0], True)
 
     def _read_holding(self, address: int) -> RegisterResult:
         self._sleep()
-        rr = self.client.read_holding_registers(address, count=1, slave=self.slave)
+        rr = self.client.read_holding_registers(address, count=1, **self._unit_kwargs())
         if rr.isError() or isinstance(rr, ExceptionResponse):
             return RegisterResult("holding", address, None, False, str(rr))
         return RegisterResult("holding", address, rr.registers[0], True)
@@ -203,22 +263,22 @@ class InnovaScanner:
         for bit in range(16):
             toggled = baseline ^ (1 << bit)
             self._sleep()
-            wr = self.client.write_register(result.address, toggled, slave=self.slave)
+            wr = self.client.write_register(result.address, toggled, **self._unit_kwargs())
 
             if wr.isError() or isinstance(wr, ExceptionResponse):
                 # Write rejected by device — not writable at this bit (or at all)
                 self._sleep()
-                self.client.write_register(result.address, baseline, slave=self.slave)
+                self.client.write_register(result.address, baseline, **self._unit_kwargs())
                 continue
 
             # Read back to verify
             self._sleep()
-            rr = self.client.read_holding_registers(result.address, count=1, slave=self.slave)
+            rr = self.client.read_holding_registers(result.address, count=1, **self._unit_kwargs())
             read_back = rr.registers[0] if not rr.isError() else None
 
             # Restore
             self._sleep()
-            self.client.write_register(result.address, baseline, slave=self.slave)
+            self.client.write_register(result.address, baseline, **self._unit_kwargs())
 
             if read_back is not None and (read_back & (1 << bit)) == (toggled & (1 << bit)):
                 writable_bits.append(bit)
@@ -233,7 +293,7 @@ class InnovaScanner:
         baseline = bool(result.raw_value)
         toggled  = not baseline
         self._sleep()
-        wr = self.client.write_coil(result.address, toggled, slave=self.slave)
+        wr = self.client.write_coil(result.address, toggled, **self._unit_kwargs())
 
         if wr.isError() or isinstance(wr, ExceptionResponse):
             result.write_probed = True
@@ -242,12 +302,12 @@ class InnovaScanner:
 
         # Read back
         self._sleep()
-        rr = self.client.read_coils(result.address, count=1, slave=self.slave)
+        rr = self.client.read_coils(result.address, count=1, **self._unit_kwargs())
         read_back = rr.bits[0] if not rr.isError() else None
 
         # Restore
         self._sleep()
-        self.client.write_coil(result.address, baseline, slave=self.slave)
+        self.client.write_coil(result.address, baseline, **self._unit_kwargs())
 
         result.write_probed = True
         if read_back is not None and read_back == toggled:
@@ -325,7 +385,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Innova ESE690II Modbus register scanner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--port",    required=True, help="Serial port, e.g. /dev/ttyUSB0 or COM3")
+    p.add_argument(
+        "--transport",
+        default="serial",
+        choices=["serial", "tcp"],
+        help="Physical transport for the Modbus session",
+    )
+    p.add_argument("--port", help="Serial port, e.g. /dev/ttyUSB0 or COM3 (serial transport only)")
+    p.add_argument("--host", help="Gateway/controller hostname or IP (TCP transport only)")
+    p.add_argument("--tcp-port", type=int, default=502, help="TCP port for Modbus gateway/controller")
     p.add_argument("--mode",    default="rtu", choices=["rtu", "ascii"], help="Modbus framing mode")
     p.add_argument("--slave",   type=int, default=1, help="Modbus slave address")
     p.add_argument("--baud",    type=int, default=9600, help="Baud rate")
@@ -355,8 +423,18 @@ def setup_logging(verbose: bool, log_path: Path) -> None:
     ])
 
 
+def validate_args(args: argparse.Namespace) -> None:
+    if args.transport == "serial" and not args.port:
+        raise SystemExit("--port is required when --transport serial is used")
+    if args.transport == "tcp" and not args.host:
+        raise SystemExit("--host is required when --transport tcp is used")
+    if args.start > args.end:
+        raise SystemExit("--start must be less than or equal to --end")
+
+
 def main() -> None:
-    args   = build_parser().parse_args()
+    args = build_parser().parse_args()
+    validate_args(args)
     ts     = datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = Path(args.output_dir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -368,15 +446,24 @@ def main() -> None:
     log = logging.getLogger("main")
 
     log.info("Innova ESE690II register scanner")
-    log.info("  port=%s  mode=%s  slave=%d  baud=%d  parity=%s",
-             args.port, args.mode, args.slave, args.baud, args.parity)
+    if args.transport == "serial":
+        endpoint = args.port
+        transport_details = f"baud={args.baud} parity={args.parity}"
+    else:
+        endpoint = f"{args.host}:{args.tcp_port}"
+        transport_details = "tcp"
+    log.info("  transport=%s  endpoint=%s  mode=%s  slave=%d  %s",
+             args.transport, endpoint, args.mode, args.slave, transport_details)
     log.info("  reg_types=%s  start=%d  end=%d  probe_write=%s",
              args.reg_types, args.start, args.end, not args.no_write)
 
     scanner = InnovaScanner(
-        port=args.port,
+        transport=args.transport,
         mode=args.mode,
         slave=args.slave,
+        port=args.port,
+        host=args.host,
+        tcp_port=args.tcp_port,
         baud=args.baud,
         parity=args.parity,
         timeout=args.timeout,
