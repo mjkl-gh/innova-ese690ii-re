@@ -79,8 +79,8 @@ python tools/scan_registers.py --transport tcp --host 192.168.1.50 --mode ascii 
 python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu \
     --reg-types holding --start 0 --end 99
 
-# Skip write probing (read-only scan)
-python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu --no-write
+# Enable write probing (bit-by-bit probe, restores original value)
+python tools/scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu --write
 ```
 
 Output is written to `scan_<timestamp>.csv` and `scan_<timestamp>.log`.

@@ -27,7 +27,7 @@ Usage
 
   # Restrict to holding registers, addresses 0-49, skip write probing
   python scan_registers.py --transport serial --port /dev/ttyUSB0 --mode rtu \\
-      --reg-types holding --start 0 --end 49 --no-write
+      --reg-types holding --start 0 --end 49
 
 Output
 ------
@@ -406,8 +406,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Register types to scan: coil discrete input holding")
     p.add_argument("--start",   type=int, default=0,    help="First register address (0-based)")
     p.add_argument("--end",     type=int, default=99,   help="Last register address (0-based, inclusive)")
-    p.add_argument("--no-write", action="store_true",
-                   help="Skip write probing (safe read-only scan)")
+    p.add_argument("--write", action="store_true",
+                   help="Enable write probing (bit-by-bit, restores original value)")
     p.add_argument("--output-dir", default=".", help="Directory for output files")
     p.add_argument("-v", "--verbose", action="store_true", help="Enable DEBUG logging")
     return p
@@ -455,7 +455,7 @@ def main() -> None:
     log.info("  transport=%s  endpoint=%s  mode=%s  slave=%d  %s",
              args.transport, endpoint, args.mode, args.slave, transport_details)
     log.info("  reg_types=%s  start=%d  end=%d  probe_write=%s",
-             args.reg_types, args.start, args.end, not args.no_write)
+             args.reg_types, args.start, args.end, args.write)
 
     scanner = InnovaScanner(
         transport=args.transport,
@@ -468,7 +468,7 @@ def main() -> None:
         parity=args.parity,
         timeout=args.timeout,
         inter_request_delay=args.delay,
-        probe_write=not args.no_write,
+        probe_write=args.write,
     )
 
     scanner.connect()
