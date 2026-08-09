@@ -142,6 +142,8 @@ def main() -> None:
                    help="Delay between requests in seconds (default 0.1)")
     p.add_argument("--skip",     type=int,   nargs="*", default=[],
                    help="Addresses to skip (space-separated, e.g. --skip 200 201)")
+    p.add_argument("--no-verify", action="store_true",
+                   help="Skip read-back verification after each write (faster but less safe)")
     p.add_argument("-q", "--quiet", action="store_true",
                    help="Reduce output to INFO level (default is DEBUG)")
 
@@ -201,6 +203,7 @@ def main() -> None:
 
     ok = 0
     fail = 0
+    mismatch = 0
 
     try:
         for e in entries_to_write:
@@ -215,9 +218,28 @@ def main() -> None:
                 if wr.isError() or isinstance(wr, ExceptionResponse):
                     log.warning("[holding @ %d] WRITE FAILED: %s", addr, wr)
                     fail += 1
+                    continue
+
+                # Read back to verify persistence
+                if not args.no_verify:
+                    if args.delay > 0:
+                        time.sleep(args.delay)
+                    rr = client.read_holding_registers(addr, count=1, **{unit_kwarg: args.slave})
+                    if rr.isError() or isinstance(rr, ExceptionResponse):
+                        log.warning("[holding @ %d] VERIFY FAILED (read error): %s", addr, rr)
+                        fail += 1
+                    elif rr.registers[0] == value:
+                        log.info("[holding @ %d] OK  0x%04X (%d) [verified]", addr, value, value)
+                        ok += 1
+                    else:
+                        read_back = rr.registers[0]
+                        log.warning("[holding @ %d] MISMATCH: wrote 0x%04X (%d) but read back 0x%04X (%d)",
+                                   addr, value, value, read_back, read_back)
+                        mismatch += 1
                 else:
                     log.info("[holding @ %d] OK  0x%04X (%d)", addr, value, value)
                     ok += 1
+
             except (ModbusException, Exception) as exc:
                 log.warning("[holding @ %d] EXCEPTION: %s", addr, exc)
                 fail += 1
@@ -226,8 +248,8 @@ def main() -> None:
         client.close()
         log.info("Disconnected")
 
-    log.info("Done — %d written, %d failed", ok, fail)
-    if fail:
+    log.info("Done — %d written, %d failed, %d mismatch", ok, fail, mismatch)
+    if fail or mismatch:
         sys.exit(1)
 
 
